@@ -107,10 +107,11 @@ async function checkAllOnce(accounts, sinceMs, caches, excludeIds) {
 }
 
 // ----- search lifecycle -----------------------------------------------------
-async function startSearch(tabId, { fresh = false } = {}) {
+async function startSearch(tabId, { fresh = false, automatic = false } = {}) {
   // Content scripts run in every frame, so a single login page can report itself
-  // several times. Don't restart a search that is already running for that tab.
-  if (activeSearch && activeSearch.tabId === tabId) return;
+  // several times. Ignore the duplicates - but never ignore a button the user
+  // pressed themselves.
+  if (automatic && activeSearch && activeSearch.tabId === tabId) return;
   if (activeSearch) clearTimeout(activeSearch.timer);
 
   const accounts = await listAccounts();
@@ -235,7 +236,7 @@ function injectIntoTab(tabId, code) {
 // ----- messaging ------------------------------------------------------------
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "LOGIN_DETECTED") {
-    startSearch(sender.tab && sender.tab.id);
+    startSearch(sender.tab && sender.tab.id, { automatic: true });
   } else if (msg.type === "MANUAL_FETCH") {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) =>
       startSearch(tabs[0] && tabs[0].id, { fresh: !!msg.fresh })

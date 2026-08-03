@@ -102,7 +102,7 @@ async function msFetch(acct, { sinceMs, cache }) {
   const out = [];
   for (const row of list.value || []) {
     const received = Date.parse(row.receivedDateTime) || 0;
-    if (received && received < sinceMs) continue;          // older than the window
+    if (received && received < sinceMs) break;             // ordered desc: the rest are older too
     const hit = cache.get(row.id);
     if (hit) { out.push(hit); continue; }
     // Full body, as text, only for messages we have not parsed yet.
