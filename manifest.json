@@ -11,10 +11,8 @@
   "permissions": [
     "identity",
     "storage",
-    "alarms",
     "notifications",
-    "activeTab",
-    "scripting"
+    "activeTab"
   ],
   "host_permissions": [
     "https://graph.microsoft.com/*",
