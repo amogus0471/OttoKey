@@ -1,0 +1,15 @@
+# Local editor / agent config
+.claude/
+.vscode/
+.idea/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Packaging output
+*.zip
+*.crx
+*.pem
+node_modules/
