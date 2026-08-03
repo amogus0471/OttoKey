@@ -66,7 +66,7 @@ const MS_SCOPES =
 // accidentally split a code across.
 const MS_TEXT_BODY = { Prefer: 'outlook.body-content-type="text"' };
 
-async function msConnect() {
+async function msConnect({ loginHint } = {}) {
   // Clear any stale locally cached Microsoft token first, so a brand-new token
   // that reflects the updated Mail.ReadWrite consent is always issued instead
   // of an old read-only one (which caused 403s on trash).
@@ -76,9 +76,12 @@ async function msConnect() {
   const p = new URLSearchParams({
     client_id: MS_CLIENT, response_type: "token", redirect_uri: REDIRECT_URI,
     scope: MS_SCOPES, response_mode: "fragment",
-    prompt: "select_account", // keep the account picker for multi-account stacking
     state
   });
+  // Reconnecting a known inbox: name it, and skip the account picker so the
+  // whole thing is one click. Linking a new one: always show the picker.
+  if (loginHint) p.set("login_hint", loginHint);
+  else p.set("prompt", "select_account");
   const redir = await webAuth(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${p}`);
   if (frag(redir, "state") !== state) throw new Error("State mismatch");
   const token = frag(redir, "access_token");
@@ -138,12 +141,17 @@ async function msTrash(acct, id) {
 // Silent token renewal (no UI) - used when a poll hits 401 because the ~1-hour
 // implicit token expired. Works while the Microsoft session cookie is alive;
 // otherwise it rejects and the user is asked to reconnect.
-async function msReauth() {
+async function msReauth(account = {}) {
   const state = rand();
   const p = new URLSearchParams({
     client_id: MS_CLIENT, response_type: "token", redirect_uri: REDIRECT_URI,
     scope: MS_SCOPES, response_mode: "fragment", prompt: "none", state
   });
+  // Without login_hint, prompt=none fails outright as soon as more than one
+  // Microsoft account is signed in to the browser: the provider cannot pick for
+  // us, so it errors instead of renewing. Naming the account is what makes
+  // silent renewal actually work.
+  if (account.email) p.set("login_hint", account.email);
   const redir = await webAuth(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${p}`, false);
   const token = frag(redir, "access_token");
   if (!token) throw new Error(frag(redir, "error_description") || "Silent re-auth failed");
@@ -161,7 +169,7 @@ async function msReauth() {
 const GOOGLE_CLIENT = "886648392591-mifi87mdls6un4i5rcovldi3akcksp9i.apps.googleusercontent.com";
 const GOOGLE_SCOPES = "openid email profile https://www.googleapis.com/auth/gmail.modify";
 
-async function gmailConnect() {
+async function gmailConnect({ loginHint } = {}) {
   const state = rand();
   const p = new URLSearchParams({
     client_id: GOOGLE_CLIENT,
@@ -169,9 +177,12 @@ async function gmailConnect() {
     redirect_uri: REDIRECT_URI,
     scope: GOOGLE_SCOPES,
     include_granted_scopes: "true",
-    prompt: "select_account",        // force the native Google account picker
     state
   });
+  // Same as Microsoft: name the account when reconnecting, show the picker when
+  // linking something new.
+  if (loginHint) p.set("login_hint", loginHint);
+  else p.set("prompt", "select_account");
   const redir = await webAuth(`https://accounts.google.com/o/oauth2/v2/auth?${p}`);
   if (frag(redir, "state") !== state) throw new Error("State mismatch");
   const token = frag(redir, "access_token");
@@ -248,12 +259,15 @@ async function gmailTrash(acct, id) {
 }
 
 // Silent Google token renewal (no UI), mirroring msReauth.
-async function gmailReauth() {
+async function gmailReauth(account = {}) {
   const state = rand();
   const p = new URLSearchParams({
     client_id: GOOGLE_CLIENT, response_type: "token", redirect_uri: REDIRECT_URI,
     scope: GOOGLE_SCOPES, include_granted_scopes: "true", prompt: "none", state
   });
+  // See msReauth: prompt=none cannot choose between signed-in accounts, so it
+  // needs to be told which one to renew.
+  if (account.email) p.set("login_hint", account.email);
   const redir = await webAuth(`https://accounts.google.com/o/oauth2/v2/auth?${p}`, false);
   const token = frag(redir, "access_token");
   if (!token) throw new Error(frag(redir, "error_description") || "Silent re-auth failed");
@@ -276,14 +290,16 @@ export function canTrash(provider) { return !!(PROVIDERS[provider] && PROVIDERS[
 export async function silentReauth(account) {
   const p = PROVIDERS[account.provider];
   if (!p || !p.reauth) throw new Error("No silent re-auth for this provider");
-  return p.reauth();
+  return p.reauth(account);
 }
 
-export async function connectProvider(provider) {
+// `loginHint` targets a specific address: used by the one-click reconnect so the
+// user does not have to pick a provider and then an account all over again.
+export async function connectProvider(provider, { loginHint } = {}) {
   const p = PROVIDERS[provider];
   if (!p) throw new Error(`Unknown provider: ${provider}`);
   if (!p.connect) throw new Error(`${p.label} is linked with an App Password, not OAuth.`);
-  const result = await p.connect();
+  const result = await p.connect({ loginHint });
   return { provider, ...result };
 }
 export function fetchMessages(account, opts) { return PROVIDERS[account.provider].fetch(account, opts); }

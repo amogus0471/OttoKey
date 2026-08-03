@@ -2,7 +2,7 @@
 // extracts the code, fills it in, and (optionally) moves that message to Trash.
 // No backend - every request goes straight from this worker to Gmail/Graph.
 import { extractCode } from "./extractor.js";
-import { listAccounts, upsertAccount, removeAccount, updateToken, MAX_ACCOUNTS } from "./accounts.js";
+import { listAccounts, upsertAccount, removeAccount, updateToken, markAccount, MAX_ACCOUNTS } from "./accounts.js";
 import { connectProvider, fetchMessages, trashMessage, silentReauth } from "./providers.js";
 
 const POLL_INTERVAL_MS = 2500;
@@ -47,7 +47,9 @@ async function withAuth(acct, run) {
     throw reauthError(acct, e);
   }
   try {
-    return await run();
+    const out = await run();
+    if (acct.needsReauth) await markAccount(acct.id, { needsReauth: false });
+    return out;
   } catch (e) {
     if (e.code !== 401) throw e;
     let fresh;
@@ -66,6 +68,7 @@ async function withAuth(acct, run) {
 function reauthError(acct, cause) {
   const e = new Error(`${acct.email || acct.provider} needs to be reconnected`);
   e.kind = "reauth";
+  e.accountId = acct.id;
   e.email = acct.email || "";
   e.cause = cause;
   return e;
@@ -94,16 +97,25 @@ async function checkAllOnce(accounts, sinceMs, caches, excludeIds) {
 
   let best = null;
   let error = null;
+  let stale = 0;      // inboxes that need the user to sign in again
+  let healthy = 0;    // inboxes we could actually read
   for (const r of results) {
     if (r.status === "fulfilled") {
+      healthy++;
       if (r.value && (!best || r.value.received > best.received)) best = r.value;
     } else {
       const e = r.reason || new Error("Inbox check failed");
       console.warn("[OttoKey] Inbox check failed:", e.message);
+      if (e.kind === "reauth") {
+        stale++;
+        await markAccount(e.accountId, { needsReauth: true });
+      }
       if (!error || e.kind === "reauth") error = e;   // a reauth need outranks anything else
     }
   }
-  return { hit: best, error, scanned };
+  // Only a total blackout should stop the search. With two inboxes linked, one
+  // expired sign-in used to abort the poll for the healthy one as well.
+  return { hit: best, error, scanned, allStale: stale > 0 && healthy === 0 };
 }
 
 // ----- search lifecycle -----------------------------------------------------
@@ -153,8 +165,9 @@ async function startSearch(tabId, { fresh = false, automatic = false } = {}) {
     if (activeSearch !== search) return;
     search.scanned = Math.max(search.scanned, outcome.scanned);
     if (outcome.hit) return finish(outcome.hit, "found");
-    // A dead token will never fix itself by polling again - stop and say so.
-    if (outcome.error && outcome.error.kind === "reauth") return finish(null, "reauth", outcome.error);
+    // A dead token will never fix itself by polling again - but only give up if
+    // there is no working inbox left to wait on.
+    if (outcome.allStale) return finish(null, "reauth", outcome.error);
     if (Date.now() >= search.stopAt) return finish(null, outcome.error ? "error" : "timeout", outcome.error);
     search.timer = setTimeout(tick, POLL_INTERVAL_MS);
   };
@@ -199,14 +212,43 @@ async function finish(hit, status, error) {
 
   setBadge("");
   if (status === "reauth") {
-    await setStatus("reauth", { statusDetail: error ? error.email || "" : "" });
-    if (settings.notify) notify("OttoKey needs reconnecting", "Your inbox sign-in expired. Open OttoKey to reconnect.");
+    await setStatus("reauth", {
+      statusDetail: error ? error.email || "" : "",
+      reauthAccountId: (error && error.accountId) || ""
+    });
+    if (settings.notify) notify("OttoKey needs reconnecting", "Your inbox sign-in expired. Open OttoKey and press Reconnect.");
   } else if (status === "error") {
     await setStatus("error", { statusDetail: (error && error.message) || "Could not reach your inbox." });
   } else {
     // Say how much was actually looked at, so "not found" is diagnosable.
     await setStatus("timeout", { statusDetail: scanned ? `Checked ${scanned} recent email${scanned === 1 ? "" : "s"}.` : "No new email arrived." });
   }
+}
+
+// Re-run the interactive sign-in for one known inbox, then resume searching.
+async function reconnectAccount(id) {
+  const accounts = await listAccounts();
+  const acct = accounts.find((a) => a.id === id);
+  if (!acct) throw new Error("That inbox is no longer linked.");
+
+  const { provider, email, token, expiresAt } = await connectProvider(acct.provider, {
+    loginHint: acct.email
+  });
+  const sameAddress = (email || "").toLowerCase() === (acct.email || "").toLowerCase();
+  if (!sameAddress && email) {
+    // Signed in as somebody else: replace the slot rather than leaving a dead
+    // entry behind next to the new one.
+    await removeAccount(acct.id);
+  }
+  await upsertAccount({ email: email || acct.email, provider, token, extra: { expiresAt, needsReauth: false } });
+  console.log(`[OttoKey] Reconnected ${provider}: ${email}`);
+
+  await setStatus("idle", { statusDetail: "", reauthAccountId: "" });
+  // The user only pressed Reconnect because they were waiting on a code.
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) =>
+    startSearch(tabs[0] && tabs[0].id)
+  );
+  return { ok: true, email: email || acct.email };
 }
 
 function stopSearch() {
@@ -287,6 +329,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       );
     });
+    return true;
+  } else if (msg.type === "RECONNECT_ACCOUNT") {
+    // One click: we already know the provider and the address, so re-run the
+    // sign-in for exactly that inbox and pick the search back up.
+    reconnectAccount(msg.id).then(
+      (res) => sendResponse(res),
+      (err) => sendResponse({ ok: false, error: err.message })
+    );
     return true;
   } else if (msg.type === "REMOVE_ACCOUNT") {
     removeAccount(msg.id).then(async (rest) => {

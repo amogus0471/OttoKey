@@ -242,6 +242,16 @@ body {
 }
 .account-remove:hover { color: var(--danger); background: rgba(224,82,106,.1); }
 
+/* An inbox whose sign-in expired: reconnect it without leaving Settings. */
+.account-row.stale { border-color: rgba(224, 82, 106, 0.45); background: rgba(224, 82, 106, 0.06); }
+.account-stale-note { font-size: 11px; color: var(--danger); font-weight: 600; margin-top: 1px; }
+.account-reconnect {
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--accent);
+  border: none; cursor: pointer; padding: 5px 10px; border-radius: 7px; flex: none;
+}
+.account-reconnect:hover { background: var(--accent-hover); }
+.account-reconnect:disabled { opacity: .6; pointer-events: none; }
+
 /* ===== Settings ===== */
 .settings-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .card-flat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }

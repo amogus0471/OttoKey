@@ -105,8 +105,9 @@
 
       <!-- Sign-in expired: polling will never fix this, so say so plainly -->
       <section id="view-reauth" class="card view hidden">
-        <p class="notice">Your inbox sign-in expired<span id="reauth-email"></span>. Reconnect it and OttoKey can read codes again.</p>
-        <button id="reauth-btn" class="btn btn-primary">Reconnect inbox</button>
+        <p class="notice">Your mail provider signed OttoKey out<span id="reauth-email"></span>. One click puts it back.</p>
+        <button id="reauth-btn" class="btn btn-primary">Reconnect</button>
+        <p class="meta">Providers expire access about once an hour for safety. OttoKey renews it silently when it can.</p>
       </section>
 
       <!-- Something went wrong reaching the mail API -->

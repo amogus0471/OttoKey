@@ -40,7 +40,22 @@ export async function updateToken(id, token, extra = {}) {
   const a = accounts.find((x) => x.id === id);
   if (a) {
     a.token = token;
+    a.needsReauth = false;   // a fresh token means this inbox is healthy again
     Object.assign(a, extra);
     await chrome.storage.local.set({ [KEY]: accounts });
   }
+}
+
+// Flag/unflag an inbox without touching its token, so the UI can offer a
+// one-click reconnect for exactly the inbox that went stale.
+export async function markAccount(id, patch) {
+  const accounts = await listAccounts();
+  const a = accounts.find((x) => x.id === id);
+  if (!a) return accounts;
+  let changed = false;
+  for (const [k, v] of Object.entries(patch)) {
+    if (a[k] !== v) { a[k] = v; changed = true; }
+  }
+  if (changed) await chrome.storage.local.set({ [KEY]: accounts });
+  return accounts;
 }

@@ -127,6 +127,9 @@ function render(state) {
     else if (status === "reauth") {
       showView("reauth");
       $("reauth-email").textContent = statusDetail ? ` for ${statusDetail}` : "";
+      // Remember which inbox to fix, so Reconnect is a single click.
+      reauthAccountId = state.reauthAccountId ||
+        ((accounts.find((a) => a.needsReauth) || {}).id) || "";
     } else if (status === "error") {
       showView("error");
       $("error-detail").textContent = statusDetail;
@@ -170,6 +173,23 @@ function renderHistory(history) {
 
 const MAX_ACCOUNTS = 5;
 
+// The inbox the "Reconnect" button on the home view should fix.
+let reauthAccountId = "";
+
+// Shared by the home-view button and the per-inbox buttons in Settings.
+function reconnect(id, btn) {
+  if (!id) { openProviders("home"); return; }   // nothing to target: fall back
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Reconnecting…"; }
+  chrome.runtime.sendMessage({ type: "RECONNECT_ACCOUNT", id }, (res) => {
+    if (btn) { btn.disabled = false; btn.textContent = label; }
+    if (chrome.runtime.lastError || !res || !res.ok) {
+      // Couldn't target that inbox - let the user pick the provider manually.
+      openProviders("home");
+    }
+  });
+}
+
 // Inline brand logos (no external requests - MV3 safe).
 const PROVIDER_LOGO = {
   gmail: `<svg viewBox="0 0 48 48"><path fill="#4caf50" d="M45 16.2l-5 2.75-5 4.75L35 40h7a3 3 0 0 0 3-3z"/><path fill="#1e88e5" d="M3 16.2l3.61 1.71L13 23.7V40H6a3 3 0 0 1-3-3z"/><polygon fill="#e53935" points="35,11.2 24,19.45 13,11.2 12,17 13,23.7 24,31.95 35,23.7 36,17"/><path fill="#c62828" d="M3 12.3v3.9l10 7.5V11.2L9.88 8.86A2.99 2.99 0 0 0 3 12.3z"/><path fill="#fbc02d" d="M45 12.3v3.9l-10 7.5V11.2l3.12-2.34A2.99 2.99 0 0 1 45 12.3z"/></svg>`,
@@ -203,7 +223,7 @@ function renderAccounts(accounts = []) {
 
   for (const a of accounts) {
     const li = document.createElement("li");
-    li.className = "account-row";
+    li.className = "account-row" + (a.needsReauth ? " stale" : "");
 
     const meta = document.createElement("div");
     meta.className = "account-meta";
@@ -211,9 +231,18 @@ function renderAccounts(accounts = []) {
     addr.className = "account-addr";
     addr.textContent = a.email || "(address hidden)";
     const prov = document.createElement("p");
-    prov.className = "account-provider";
-    prov.textContent = a.provider;
+    prov.className = a.needsReauth ? "account-stale-note" : "account-provider";
+    prov.textContent = a.needsReauth ? "Signed out - reconnect" : a.provider;
     meta.append(addr, prov);
+
+    // Fix a stale inbox without leaving Settings.
+    let fix = null;
+    if (a.needsReauth) {
+      fix = document.createElement("button");
+      fix.className = "account-reconnect";
+      fix.textContent = "Reconnect";
+      fix.addEventListener("click", () => reconnect(a.id, fix));
+    }
 
     const rm = document.createElement("button");
     rm.className = "account-remove";
@@ -223,7 +252,9 @@ function renderAccounts(accounts = []) {
       chrome.runtime.sendMessage({ type: "REMOVE_ACCOUNT", id: a.id })
     );
 
-    li.append(logoSpan(a.provider), meta, rm);
+    li.append(logoSpan(a.provider), meta);
+    if (fix) li.append(fix);
+    li.append(rm);
     list.append(li);
   }
 }
@@ -236,7 +267,7 @@ $("error-retry").addEventListener("click", () => chrome.runtime.sendMessage({ ty
 // "Fetch new code" waits for the next email instead of handing back the one it
 // already found - which is what you want after asking the site to resend.
 $("refetch-btn").addEventListener("click", () => chrome.runtime.sendMessage({ type: "MANUAL_FETCH", fresh: true }));
-$("reauth-btn").addEventListener("click", () => openProviders("home"));
+$("reauth-btn").addEventListener("click", (e) => reconnect(reauthAccountId, e.currentTarget));
 $("stop-btn").addEventListener("click", () => chrome.runtime.sendMessage({ type: "STOP_SEARCH" }));
 $("clear-btn").addEventListener("click", () => chrome.storage.local.set({ history: [] }));
 
@@ -394,7 +425,7 @@ chrome.storage.local.get("consentAccepted").then(({ consentAccepted }) => {
 });
 
 // ----- live state -----------------------------------------------------------
-const KEYS = ["status", "statusDetail", "latestCode", "history", "settings", "connected_accounts"];
+const KEYS = ["status", "statusDetail", "reauthAccountId", "latestCode", "history", "settings", "connected_accounts"];
 function refresh() {
   chrome.storage.local.get(KEYS).then((s) => {
     currentAccounts = s.connected_accounts || [];

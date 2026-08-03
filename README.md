@@ -134,8 +134,14 @@ everything else still works.
   profile can read them, exactly as with any other signed-in extension. Revoke
   access from your [Google](https://myaccount.google.com/permissions) or
   [Microsoft](https://account.microsoft.com/privacy) account at any time.
-- **Access tokens are short-lived and renewed silently.** If the silent renewal
-  fails, OttoKey says "reconnect", instead of pretending no code arrived.
+- **Access tokens are short-lived and renewed silently.** The implicit OAuth flow
+  used here returns no refresh token, so an access token lasts about an hour and
+  is renewed with a `prompt=none` round trip carrying `login_hint`. Without that
+  hint the renewal fails the moment more than one account is signed in to the
+  browser, which is what used to force a manual reconnect every hour. If the
+  silent renewal genuinely fails, OttoKey says "reconnect" — one click, for that
+  inbox only — instead of pretending no code arrived. A linked inbox that goes
+  stale never blocks the others.
 - `chrome.action.openPopup()` needs Chrome 127+ and a focused window. If it is
   blocked, the badge and the notification are the fallback and the code is still
   filled in.
