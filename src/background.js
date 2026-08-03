@@ -126,9 +126,13 @@ async function startSearch(tabId, { fresh = false, automatic = false } = {}) {
   }
 
   await setStatus("searching", { latestCode: null, statusDetail: "" });
-  // Do NOT open the popup here - we don't yet know a code exists. We open in
-  // finish() only once a code is actually found.
   setBadge("...");
+
+  // "Open OttoKey automatically" means as soon as the hunt starts - that is what
+  // makes the searching animation visible at all. Auto-fill is a separate
+  // setting, so leaving this off gives you a silent fill with no window.
+  const settings = await getSettings();
+  if (settings.autoopen) openPopupSafe("search start");
 
   const sinceMs = Date.now() - LOOKBACK_MS;
   const search = {
@@ -187,8 +191,9 @@ async function finish(hit, status, error) {
 
     setBadge("1");
     if (settings.notify) notify("Verification code ready", `${entry.code} - ${entry.site || "filled"}`);
+    // Fill first, then surface the popup: opening it takes focus off the page.
     if (settings.autofill && tabId != null) injectIntoTab(tabId, entry.code);
-    if (settings.autoopen) openPopupSafe();
+    if (settings.autoopen) openPopupSafe("code found");
     return;
   }
 
@@ -216,8 +221,26 @@ function hostFrom(from) {
 }
 
 // ----- UI side effects ------------------------------------------------------
-function openPopupSafe() {
-  try { if (chrome.action.openPopup) chrome.action.openPopup().catch(() => {}); } catch { /* best-effort */ }
+// chrome.action.openPopup() needs Chrome 127+ and a focused window, and it
+// rejects if a popup is already showing. Everything except "already open" is
+// worth logging: silently swallowing it is why "Open OttoKey automatically"
+// looked broken with no way to tell why.
+function openPopupSafe(when) {
+  if (!chrome.action || !chrome.action.openPopup) {
+    console.warn("[OttoKey] Cannot open the popup automatically: this Chrome build has no chrome.action.openPopup (needs Chrome 127+). The badge and notification still work.");
+    return;
+  }
+  const complain = (e) => {
+    const msg = (e && e.message) || String(e);
+    if (/already open|popup is open/i.test(msg)) return;   // expected, not a fault
+    console.warn(`[OttoKey] Could not open the popup (${when}):`, msg);
+  };
+  try {
+    const p = chrome.action.openPopup();
+    if (p && typeof p.catch === "function") p.catch(complain);
+  } catch (e) {
+    complain(e);
+  }
 }
 function setBadge(text) {
   chrome.action.setBadgeBackgroundColor({ color: "#14b8a6" });
